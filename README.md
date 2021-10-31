@@ -1,38 +1,47 @@
 # piwifi
-Python module to manage wpa_supplicant wifi networks on Raspberry Pi
+Python module to manage wpa_supplicant wifi networks on Raspberry Pi  
 
-# installation
-```
-sudo pip3 install piwifi
-```
+Original repo: https://github.com/jeffleary00/piwifi/
+## Fork
+The edits and setup from this fork got it working for me.  Tested on Pi 3B+
+#
+## Setup
 
-# usage
-```
-  from piwifi import Scanner, WpaManager
+Overwrite file:  /etc/wpa_supplicant/wpa_supplicant.conf  
 
-  s = Scanner(interface='wlan0', sudo=True)
-  print(s.cells)
-  print(s.quietest_channel())
-  print(s.strongest_channel())
+File should have these lines only (needed to use wpa_cli):
 
-  m = WpaManager(sudo=True)
-  m.list_networks()
-  m.add_network( {'ssid': 'Some Wifi', 'scan_ssid': 1, 'psk': 'wpa2password'} )
-  m.set_network(1, 'psk', 'newpassword')
-  m.delete_network(3)
-  m.enable_network(1)
-  m.save_config()
+```bash
+ctrl_interface=/run/wpa_supplicant
+update_config=1
 ```
 
-# todo
-Tests needed, of course. And some better exception and error handling too. Make a pull request if you would like to contribute! Thanks!
 
-# caveats
-- Tested with Raspbian 'Stretch'. YMMV
 
-- The wpa_supplicant python looks far more complete, and you should probably be using that module instead. 
-However, I could not get it to work, even with the most basic examples and tests. So, I abandoned it and wrote this module to quickly and easily meet my needs.
+File:  /etc/network/interfaces  
 
-- This module's classes are simply wrappers around the wpi_cli, wpa_passphrase, and iw list commands. A bit crude, but it allows a non-root user (with appropriate sudo permissions) to manage the wifi networks.
+depends on system, but on raspberry pi 3B+ I believe this is the default (worked for me):
 
-- Although this is intended for Raspberry Pi installs, it should probably work for most Linux systems.
+```bash
+source-directory /etc/network/interfaces.d
+
+auto lo
+iface lo inet loopback
+
+auto eth0
+iface eth0 inet manual
+
+allow-hotplug wlan0
+iface wlan0 inet manual
+    wpa-conf /etc/wpa_supplicant/wpa_supplicant.conf
+
+allow-hotplug wlan1
+iface wlan1 inet manual
+    wpa-conf /etc/wpa_supplicant/wpa_supplicant.conf
+```
+
+
+Edit the piwifi_test.py with your configuration and run it
+```bash
+python3 piwifi_test.py
+```
