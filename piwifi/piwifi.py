@@ -195,10 +195,13 @@ class WpaManager(PiCommander):
     def __init__(self, **kwargs):
         super(WpaManager, self).__init__(**kwargs)
         self.sudo = False
+        self.debug = False
+        self.dhcp = True
         self.wpa_cli = '/sbin/wpa_cli'
         self.wpa_passphrase = '/sbin/wpa_passphrase'
+        self.interface = 'wlan0'
         
-        allowed = ['sudo', 'wpa_cli', 'wpa_passphrase']
+        allowed = ['sudo', 'wpa_cli', 'wpa_passphrase', 'dhcp', 'interface', 'debug']
         for k, v in kwargs.items():
             if k in allowed:
                 setattr(self, k, v)
@@ -214,7 +217,7 @@ class WpaManager(PiCommander):
     """
     def list_networks(self):
         mylist = []
-        cmd = [self.wpa_cli, 'list_networks']
+        cmd = [self.wpa_cli, '-i', self.interface, 'list_networks']
         rval, out, err = self.run_command(cmd, self.sudo)
         for line in out.decode('utf-8').splitlines():            
             if not re.search(r'^\d+', line):
@@ -245,14 +248,27 @@ class WpaManager(PiCommander):
         0 on success, non-zero on failure
     """           
     def add_network(self, n):
+        if self.debug:
+            print('adding new network')
         failures = 0
-        idx = self.new_network_index()
+
+
+        # make sure it's the one and only wifi network, otherwise causes mess in wpa_supplicant conf
+        for network_idx in [x[0] for x in self.list_networks()]:
+                self.remove_network(network_idx)
+
+        idx = self.new_network_index()   
+    
         if idx is None:
-            # really, is this the best I could do?
-            # let's put a proper Exception here at some point, ok?
-            raise
-                    
-        for k, v in n.items():    
+            raise Exception("Couldn't create new network index")
+        else:
+            if self.debug:
+                print('new network index: {0}'.format(idx))
+
+
+        for k, v in n.items():   
+            if self.debug: 
+                print('setting network {0} to {1}'.format(k, v))
             if self.set_network(idx, k, v):
                 failures += 1
                 # oops! something went wrong. don't leave partial networks
@@ -262,12 +278,16 @@ class WpaManager(PiCommander):
                 break    
         
         if not failures:
+            self.wpa_status()
             if self.enable_network(idx):
                 failures += 1
-            else:
-                if self.save_config():
+            elif self.save_config():
                     failures += 1
-    
+            else:
+                self.wpa_status()
+                if self.run_dhcp():
+                    failures += 1
+        self.wpa_status()
         return failures
      
     
@@ -283,20 +303,45 @@ class WpaManager(PiCommander):
     returns:
         0 on success, non-zero on failure
     """           
-    def edit_network(self, idx, n):
-        failures = 0            
-        for k, v in n.items():
-            if k == 'psk':
-                # convert plain text password to a wpa passphrase instead
-                v = self.passphrase(v)
+    # def edit_network(self, idx, n):
+    #     failures = 0            
+    #     for k, v in n.items():
+    #         if k == 'psk':
+    #             # convert plain text password to a wpa passphrase instead
+    #             v = self.passphrase(v)
                 
-            rval = self.set_network(idx, k, v)
-            if rval:
-                # messages here?
-                failures += 1
+    #         rval = self.set_network(idx, k, v)
+    #         if rval:
+    #             # messages here?
+    #             failures += 1
                     
-        return failures
+    #     return failures
+    """
+        Reconnect wpa_cli
+    """
+    def wpa_reconnect(self):
+        cmd = [self.wpa_cli, '-i', self.interface, 'reconnect']
+        rval, out, err = self.run_command(cmd, self.sudo)
+        return rval
+
+    """
+        Status of wpa_cli
+    """
+    def wpa_status(self):
+        cmd = [self.wpa_cli, '-i', self.interface, 'status']
+        rval, out, err = self.run_command(cmd, self.sudo)
+        if self.debug:
+            print(rval, out, err)
         
+    """
+        Get IP from router
+    """
+    def run_dhcp(self):
+        cmd = ['dhclient', '-r']
+        rval, out, err = self.run_command(cmd, self.sudo)
+        cmd = ['dhclient', self.interface]
+        rval, out, err = self.run_command(cmd, self.sudo)
+        return rval+rval
 
     """
     Set network parameters
@@ -311,14 +356,19 @@ class WpaManager(PiCommander):
         quoted = ['ssid', 'psk', 'identity', 'ca_cert', 'client_cert',
                     'private_key', 'private_key_passwd', 'password',
                     'anonymous_identity']
-                    
+        if self.debug:
+            print('setting network {0} to {1}'.format(key, val))
         if key in quoted:
             val = '"%s"' % str(val)
         else:
             val = str(val)  
             
-        cmd = [self.wpa_cli, 'set_network', str(idx), key, val]
+        cmd = [self.wpa_cli, '-i', self.interface, 'set_network', str(idx), key, val]
+        if self.debug:
+            print(cmd)
         rval, out, err = self.run_command(cmd, self.sudo)
+        if self.debug:
+            print(rval, out, err)
         return rval
 
 
@@ -330,7 +380,7 @@ class WpaManager(PiCommander):
         exit-code (0 = success)
     """
     def remove_network(self, idx):
-        cmd = [self.wpa_cli, 'remove_network', str(idx)]
+        cmd = [self.wpa_cli, '-i', self.interface, 'remove_network', str(idx)]
         rval, out, err = self.run_command(cmd, self.sudo)
         return rval
 
@@ -343,8 +393,12 @@ class WpaManager(PiCommander):
         0 on success, non-zero on failure
     """
     def save_config(self):
-        cmd = [self.wpa_cli, 'save_config']
+        if self.debug:
+            print('saving config')
+        cmd = [self.wpa_cli, '-i', self.interface, 'save_config']
         rval, out, err = self.run_command(cmd, self.sudo)
+        if self.debug:
+            print(rval, out, err)
         return rval
         
     
@@ -357,7 +411,9 @@ class WpaManager(PiCommander):
         0 on success, non-zero on failure
     """           
     def enable_network(self, idx):
-        cmd = [self.wpa_cli, "enable_network", str(idx)]          
+        if self.debug:
+            print('enabling network with wpa cli')
+        cmd = [self.wpa_cli, '-i', self.interface, "enable_network", str(idx)]          
         rval, out, err = self.run_command(cmd, self.sudo)
         return rval
         
@@ -365,8 +421,10 @@ class WpaManager(PiCommander):
     """
     get a passphrase from wpa_passphrase, based on a string password
     """
-    def passphrase(self, passwd):
-        cmd = [self.wpa_passphrase, 'Foo', passwd]
+    def passphrase(self, wifi_ssid, passwd):
+        if self.debug:
+            print('generating passphrase')
+        cmd = [self.wpa_passphrase, wifi_ssid, passwd]
         rval, out, err = self.run_command(cmd, self.sudo)
         for line in out.decode('utf-8').splitlines():
             if re.search(r'^\s*(#|$)', line):
@@ -383,7 +441,7 @@ class WpaManager(PiCommander):
     Get new index number for network to be added
     """
     def new_network_index(self):
-        cmd = [self.wpa_cli, "add_network"] 
+        cmd = [self.wpa_cli, '-i', self.interface, "add_network"] 
         rval, out, err = self.run_command(cmd, self.sudo)
         for line in out.decode('utf-8').splitlines():
             match = re.search(r'^\s*(\d+)\s*$', line)
